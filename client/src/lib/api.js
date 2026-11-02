@@ -9,11 +9,13 @@ export const tokenStore = {
 let onUnauthorized = () => {};
 export const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '') : '';
+
 export async function api(path, { method = 'GET', body, auth = true } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   const token = tokenStore.get();
   if (auth && token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`/api${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const res = await fetch(`${API_BASE}/api${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
   if (!res.ok) {
