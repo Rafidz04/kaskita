@@ -36,19 +36,6 @@ Aplikasi buku kas kecil (petty cash) & pencatatan iuran kas bulanan dengan stack
 
 ---
 
-## 🔑 Akun Bawaan (Default Credentials)
-
-Saat database pertama kali diinisialisasi, sistem secara otomatis membuat akun awal:
-
-| Role | Username | Password | Keterangan |
-| :--- | :--- | :--- | :--- |
-| **Super Admin** | `superadmin` | `superadmin123` | Akses penuh + kelola user & pengaturan |
-| **Admin** | `admin` | `admin123` | Kelola transaksi, iuran & anggota |
-| **Guest** | *(Tanpa Login)* | *(Tanpa Password)* | Klik tombol **"Masuk sebagai Tamu"** di halaman login |
-
-*(Password dapat diubah kapan saja di menu Pengaturan)*
-
----
 
 ## 🚀 Cara Menjalankan
 
