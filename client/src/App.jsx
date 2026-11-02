@@ -13,7 +13,7 @@ function ProtectedRoute({ children }) {
   const { user, ready } = useAuth();
   const location = useLocation();
 
-  if (!ready) return <Loader />;
+  if (!ready && !user) return <Loader />;
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
@@ -23,7 +23,7 @@ function ProtectedRoute({ children }) {
 function PublicOrGuestRoute({ children }) {
   const { user, guest, ready } = useAuth();
 
-  if (!ready) return <Loader />;
+  if (!ready && !user && !guest) return <Loader />;
   // Kalau belum login dan belum klik masuk sebagai tamu, arahkan ke login
   if (!user && !guest) {
     return <Navigate to="/login" replace />;

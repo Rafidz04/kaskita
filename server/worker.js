@@ -18,43 +18,79 @@ app.onError((err, c) => {
   return c.json({ message: err.message || 'Terjadi kesalahan pada server' }, 500);
 });
 
+// ===== Health (responds fast without waiting for DB) =====
+app.get('/api/health', (c) => {
+  const state = mongoose.connection.readyState;
+  return c.json({
+    ok: true,
+    db: state === 1 ? 'connected' : state === 2 ? 'connecting' : 'disconnected',
+    time: new Date().toISOString(),
+  });
+});
+
 // Ensure MongoDB is connected safely in serverless
-let isSeeded = false;
+let connectingPromise = null;
+let isSeeded = true;
+
+// Attach listeners to prevent unhandled EventEmitter errors from crashing workerd
+mongoose.connection.on('error', (err) => {
+  console.warn('Mongoose background connection error:', err?.message || err);
+  connectingPromise = null;
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('Mongoose background connection disconnected');
+  connectingPromise = null;
+});
+
 async function ensureDb(env) {
+  // readyState 1 = connected
   if (mongoose.connection.readyState === 1) return;
+
+  // If a connection attempt is in progress, wait for it
+  if (connectingPromise) {
+    try {
+      await connectingPromise;
+      if (mongoose.connection.readyState === 1) return;
+    } catch {
+      connectingPromise = null;
+    }
+  }
 
   const uri = env?.MONGODB_URI || process.env.MONGODB_URI;
   if (!uri) throw new Error('MONGODB_URI belum diset di Environment Variables Cloudflare!');
 
-  if (mongoose.connection.readyState === 2) {
-    await new Promise((resolve) => {
-      const t = setTimeout(resolve, 3000);
-      mongoose.connection.once('connected', () => { clearTimeout(t); resolve(); });
-      mongoose.connection.once('error', () => { clearTimeout(t); resolve(); });
-    });
-    if (mongoose.connection.readyState === 1) return;
-  }
-
-  if (mongoose.connection.readyState !== 0) {
-    try { await mongoose.disconnect(); } catch {}
-  }
-
-  await mongoose.connect(uri, {
-    serverSelectionTimeoutMS: 8000,
-    connectTimeoutMS: 8000,
-    socketTimeoutMS: 30000,
-    maxPoolSize: 10,
-    minPoolSize: 0,
-    maxIdleTimeMS: 15000,
-  });
-
-  if (!isSeeded) {
-    try {
-      await seed();
-      isSeeded = true;
-    } catch (e) {
-      console.warn('Seed notice:', e.message);
+  connectingPromise = (async () => {
+    // If connection was in a stuck state, clean up first
+    if (mongoose.connection.readyState === 2 || mongoose.connection.readyState === 3) {
+      try {
+        await mongoose.disconnect();
+      } catch {}
     }
+
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 10000,
+      connectTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 2,
+      minPoolSize: 0,
+      maxIdleTimeMS: 15000,
+    });
+
+    if (!isSeeded) {
+      try {
+        await seed();
+        isSeeded = true;
+      } catch (e) {
+        console.warn('Seed notice:', e.message);
+      }
+    }
+  })();
+
+  try {
+    await connectingPromise;
+  } finally {
+    connectingPromise = null;
   }
 }
 
@@ -102,9 +138,6 @@ async function nextVoucher() {
   const max = list.reduce((m, t) => Math.max(m, parseInt(t.voucher.slice(prefix.length), 10) || 0), 100);
   return { prefix, next: max + 1, voucher: `${prefix}${max + 1}` };
 }
-
-// ===== Health =====
-app.get('/api/health', (c) => c.json({ ok: true, time: new Date().toISOString() }));
 
 // ===== Auth =====
 app.post('/api/auth/login', async (c) => {
@@ -438,4 +471,16 @@ app.all('*', (c) => {
   return c.text('Not found', 404);
 });
 
-export default app;
+export default {
+  async fetch(request, env, ctx) {
+    try {
+      return await app.fetch(request, env, ctx);
+    } catch (err) {
+      console.error('Worker root error:', err);
+      return new Response(
+        JSON.stringify({ message: err?.message || 'Server sedang sibuk, silakan klik lagi 🙏' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  },
+};

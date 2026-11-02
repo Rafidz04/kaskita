@@ -2,15 +2,38 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { api, tokenStore, setUnauthorizedHandler } from './api.js';
 
 const GUEST_KEY = 'kaskita_guest';
+const USER_KEY = 'kaskita_user';
+
+export const userStore = {
+  get: () => {
+    try {
+      const raw = localStorage.getItem(USER_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  },
+  set: (u) => {
+    try {
+      if (u) localStorage.setItem(USER_KEY, JSON.stringify(u));
+      else localStorage.removeItem(USER_KEY);
+    } catch {}
+  },
+  clear: () => localStorage.removeItem(USER_KEY),
+};
+
 const AuthCtx = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    return tokenStore.get() ? userStore.get() : null;
+  });
   const [guest, setGuest] = useState(() => localStorage.getItem(GUEST_KEY) === '1');
   const [ready, setReady] = useState(false);
 
   const logout = useCallback(() => {
     tokenStore.clear();
+    userStore.clear();
     localStorage.removeItem(GUEST_KEY);
     setUser(null);
     setGuest(false);
@@ -18,16 +41,30 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     setUnauthorizedHandler(logout);
-    if (!tokenStore.get()) { setReady(true); return; }
+    const token = tokenStore.get();
+    if (!token) {
+      setReady(true);
+      return;
+    }
     api.get('/auth/me')
-      .then((d) => setUser(d.user))
-      .catch(() => tokenStore.clear())
+      .then((d) => {
+        setUser(d.user);
+        userStore.set(d.user);
+      })
+      .catch((err) => {
+        if (err?.status === 401) {
+          logout();
+        } else {
+          console.warn('Session verification notice:', err?.message || err);
+        }
+      })
       .finally(() => setReady(true));
   }, [logout]);
 
   const login = useCallback(async (username, password) => {
     const d = await api.post('/auth/login', { username, password }, { auth: false });
     tokenStore.set(d.token);
+    userStore.set(d.user);
     localStorage.removeItem(GUEST_KEY);
     setGuest(false);
     setUser(d.user);
@@ -41,7 +78,10 @@ export function AuthProvider({ children }) {
 
   const value = useMemo(() => ({
     user,
-    setUser,
+    setUser: (u) => {
+      userStore.set(u);
+      setUser(u);
+    },
     guest: !user && guest,
     isSuper: user?.role === 'superadmin',
     ready,
