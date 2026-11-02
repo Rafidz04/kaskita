@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { DurableObject } from 'cloudflare:workers';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -35,63 +36,57 @@ let isSeeded = true;
 // Attach listeners to prevent unhandled EventEmitter errors from crashing workerd
 mongoose.connection.on('error', (err) => {
   console.warn('Mongoose background connection error:', err?.message || err);
-  connectingPromise = null;
 });
 
 mongoose.connection.on('disconnected', () => {
   console.warn('Mongoose background connection disconnected');
-  connectingPromise = null;
 });
 
-async function ensureDb(env) {
-  // readyState 1 = connected
+async function connectDb(uri) {
   if (mongoose.connection.readyState === 1) return;
+  if (mongoose.connection.readyState === 2) {
+    await mongoose.connection.asPromise();
+    return;
+  }
+  if (mongoose.connection.readyState === 3) await mongoose.disconnect();
 
-  // If a connection attempt is in progress, wait for it
-  if (connectingPromise) {
+  await mongoose.connect(uri, {
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
+    socketTimeoutMS: 45000,
+    maxPoolSize: 2,
+    minPoolSize: 0,
+    maxIdleTimeMS: 15000,
+  });
+
+  if (!isSeeded) {
     try {
-      await connectingPromise;
-      if (mongoose.connection.readyState === 1) return;
-    } catch {
-      connectingPromise = null;
+      await seed();
+      isSeeded = true;
+    } catch (e) {
+      console.warn('Seed notice:', e.message);
     }
   }
+}
+
+async function ensureDb(env) {
+  if (mongoose.connection.readyState === 1) return;
 
   const uri = env?.MONGODB_URI || process.env.MONGODB_URI;
   if (!uri) throw new Error('MONGODB_URI belum diset di Environment Variables Cloudflare!');
 
-  connectingPromise = (async () => {
-    // If connection was in a stuck state, clean up first
-    if (mongoose.connection.readyState === 2 || mongoose.connection.readyState === 3) {
-      try {
-        await mongoose.disconnect();
-      } catch {}
+  if (!connectingPromise) {
+    const attempt = connectDb(uri);
+    connectingPromise = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (connectingPromise === attempt) connectingPromise = null;
     }
-
-    await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 10000,
-      connectTimeoutMS: 10000,
-      socketTimeoutMS: 45000,
-      maxPoolSize: 2,
-      minPoolSize: 0,
-      maxIdleTimeMS: 15000,
-    });
-
-    if (!isSeeded) {
-      try {
-        await seed();
-        isSeeded = true;
-      } catch (e) {
-        console.warn('Seed notice:', e.message);
-      }
-    }
-  })();
-
-  try {
-    await connectingPromise;
-  } finally {
-    connectingPromise = null;
+    return;
   }
+
+  await connectingPromise;
 }
 
 app.use('/api/*', async (c, next) => {
@@ -474,6 +469,11 @@ app.all('*', (c) => {
 export default {
   async fetch(request, env, ctx) {
     try {
+      const pathname = new URL(request.url).pathname;
+      if (pathname === '/api' || pathname.startsWith('/api/')) {
+        const id = env.KASKITA_API.idFromName('primary');
+        return await env.KASKITA_API.get(id).fetch(request);
+      }
       return await app.fetch(request, env, ctx);
     } catch (err) {
       console.error('Worker root error:', err);
@@ -484,3 +484,11 @@ export default {
     }
   },
 };
+
+// Keep MongoDB's TCP connection inside a Durable Object, where it can be reused
+// safely across requests. Plain Workers cannot reuse I/O objects between calls.
+export class KasKitaApi extends DurableObject {
+  async fetch(request) {
+    return app.fetch(request, this.env, this.ctx);
+  }
+}

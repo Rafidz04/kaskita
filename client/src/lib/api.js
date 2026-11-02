@@ -41,8 +41,9 @@ export async function api(path, { method = 'GET', body, auth = true } = {}, retr
   }
 
   if (!res.ok) {
-    // Auto-retry once on 5xx serverless cold start / DB reconnect
-    if (method === 'GET' && [500, 502, 503, 504].includes(res.status) && retryCount < 1) {
+    // Reads and login can safely retry once after a transient Worker/DB error.
+    const retryableRequest = method === 'GET' || (method === 'POST' && path === '/auth/login');
+    if (retryableRequest && [500, 502, 503, 504].includes(res.status) && retryCount < 1) {
       await new Promise((r) => setTimeout(r, 600));
       return api(path, { method, body, auth }, retryCount + 1);
     }

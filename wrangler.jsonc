@@ -9,6 +9,20 @@
   "observability": {
     "enabled": true
   },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "KASKITA_API",
+        "class_name": "KasKitaApi"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["KasKitaApi"]
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
