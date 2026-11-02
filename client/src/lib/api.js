@@ -20,7 +20,8 @@ export async function api(path, { method = 'GET', body, auth = true } = {}) {
   try { data = await res.json(); } catch { /* empty body */ }
   if (!res.ok) {
     if (res.status === 401 && auth && token) onUnauthorized();
-    throw new Error(data?.message || `Request gagal (${res.status})`);
+    const errMsg = data?.message || (res.status === 500 ? 'Koneksi database/server sedang sibuk, silakan klik lagi 🙏' : `Request gagal (${res.status})`);
+    throw new Error(errMsg);
   }
   return data;
 }

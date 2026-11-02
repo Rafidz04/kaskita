@@ -77,10 +77,10 @@ const settingsSchema = new Schema(
   { timestamps: true },
 );
 
-export const User = model('User', userSchema);
-export const Member = model('Member', memberSchema);
-export const Transaction = model('Transaction', transactionSchema);
-export const Settings = model('Settings', settingsSchema);
+export const User = mongoose.models.User || model('User', userSchema);
+export const Member = mongoose.models.Member || model('Member', memberSchema);
+export const Transaction = mongoose.models.Transaction || model('Transaction', transactionSchema);
+export const Settings = mongoose.models.Settings || model('Settings', settingsSchema);
 
 export async function getSettings() {
   let s = await Settings.findOne({ key: 'main' });

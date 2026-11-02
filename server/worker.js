@@ -12,19 +12,50 @@ const app = new Hono();
 
 app.use('*', cors());
 
-// Ensure MongoDB is connected
-let dbInitPromise = null;
+// Global error handler so Worker never crashes with 1101
+app.onError((err, c) => {
+  console.error('API Error:', err);
+  return c.json({ message: err.message || 'Terjadi kesalahan pada server' }, 500);
+});
+
+// Ensure MongoDB is connected safely in serverless
+let isSeeded = false;
 async function ensureDb(env) {
   if (mongoose.connection.readyState === 1) return;
-  if (!dbInitPromise) {
-    const uri = env?.MONGODB_URI || process.env.MONGODB_URI;
-    if (!uri) throw new Error('MONGODB_URI belum diset di Environment Variables Cloudflare!');
-    dbInitPromise = (async () => {
-      await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000 });
-      await seed();
-    })();
+
+  const uri = env?.MONGODB_URI || process.env.MONGODB_URI;
+  if (!uri) throw new Error('MONGODB_URI belum diset di Environment Variables Cloudflare!');
+
+  if (mongoose.connection.readyState === 2) {
+    await new Promise((resolve) => {
+      const t = setTimeout(resolve, 3000);
+      mongoose.connection.once('connected', () => { clearTimeout(t); resolve(); });
+      mongoose.connection.once('error', () => { clearTimeout(t); resolve(); });
+    });
+    if (mongoose.connection.readyState === 1) return;
   }
-  await dbInitPromise;
+
+  if (mongoose.connection.readyState !== 0) {
+    try { await mongoose.disconnect(); } catch {}
+  }
+
+  await mongoose.connect(uri, {
+    serverSelectionTimeoutMS: 8000,
+    connectTimeoutMS: 8000,
+    socketTimeoutMS: 30000,
+    maxPoolSize: 10,
+    minPoolSize: 0,
+    maxIdleTimeMS: 15000,
+  });
+
+  if (!isSeeded) {
+    try {
+      await seed();
+      isSeeded = true;
+    } catch (e) {
+      console.warn('Seed notice:', e.message);
+    }
+  }
 }
 
 app.use('/api/*', async (c, next) => {
@@ -77,16 +108,20 @@ app.get('/api/health', (c) => c.json({ ok: true, time: new Date().toISOString() 
 
 // ===== Auth =====
 app.post('/api/auth/login', async (c) => {
-  const { username, password } = (await c.req.json().catch(() => ({}))) || {};
-  if (!username || !password) return c.json({ message: 'Username & password wajib diisi' }, 400);
-  const user = await User.findOne({ username: String(username).toLowerCase().trim() });
-  if (!user || !(await bcrypt.compare(String(password), user.passwordHash))) {
-    return c.json({ message: 'Username atau password salah 😵' }, 401);
+  try {
+    const { username, password } = (await c.req.json().catch(() => ({}))) || {};
+    if (!username || !password) return c.json({ message: 'Username & password wajib diisi' }, 400);
+    const user = await User.findOne({ username: String(username).toLowerCase().trim() });
+    if (!user || !(await bcrypt.compare(String(password), user.passwordHash))) {
+      return c.json({ message: 'Username atau password salah 😵' }, 401);
+    }
+    user.lastLoginAt = new Date();
+    await user.save();
+    const token = jwt.sign({ sub: String(user._id), role: user.role }, getJwtSecret(c.env), { expiresIn: '7d' });
+    return c.json({ token, user: user.toSafeJSON() });
+  } catch (err) {
+    return c.json({ message: err.message || 'Gagal login, coba lagi' }, 500);
   }
-  user.lastLoginAt = new Date();
-  await user.save();
-  const token = jwt.sign({ sub: String(user._id), role: user.role }, getJwtSecret(c.env), { expiresIn: '7d' });
-  return c.json({ token, user: user.toSafeJSON() });
 });
 
 app.get('/api/auth/me', auth, (c) => c.json({ user: c.get('user').toSafeJSON() }));
