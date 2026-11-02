@@ -13,5 +13,9 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
+  },
+  "vars": {
+    "SEED_ADMIN_USERNAME": "admin",
+    "SEED_SUPERADMIN_USERNAME": "superadmin"
   }
 }
