@@ -67,6 +67,21 @@ npm run seed:reset
 
 ---
 
+## Deployment Cloudflare
+
+`npm run deploy` membangun frontend dan menerapkan `server/worker.js` beserta asetnya.
+Login Wrangler terlebih dahulu dengan `npx wrangler login --device` jika sesi belum tersedia.
+Secret production, termasuk `MONGODB_URI` dan `JWT_SECRET`, tersimpan di Cloudflare dan terpisah dari `.env` lokal.
+
+API memakai Durable Object `primary-apac` dengan petunjuk lokasi `apac` untuk mempertahankan koneksi MongoDB antar-request.
+Objek ini menggantikan objek `primary` yang mengalami timeout TLS; data kas tetap tersimpan di Atlas.
+Petunjuk lokasi hanya berlaku saat objek pertama kali dibuat, sehingga mengganti hint saja tidak memindahkan objek lama.
+Monitoring MongoDB menggunakan mode `poll` karena driver tidak otomatis mengenali Cloudflare sebagai lingkungan FaaS.
+
+Setelah deploy, periksa `/api/dashboard` untuk memastikan query database berhasil dan `/api/health` untuk status koneksi.
+Jika gagal, log `API Error` mencatat `topology.servers[].error` beserta penyebab turunannya; URI MongoDB disamarkan.
+Jalankan `node --test tests/connection-error.test.js` untuk menguji format log dan penyamaran URI.
+
 ## 📁 Struktur Direktori
 
 ```

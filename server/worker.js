@@ -8,6 +8,7 @@ import { User, Member, Transaction, getSettings, DUES_CATEGORY } from './models.
 import { buildDashboard, slimTx, publicSettings } from './dashboard.js';
 import { isMonthKey, isDateKey, monthLabel, todayKey } from './utils.js';
 import { seed } from './seed.js';
+import { describeConnectionError } from './connection-error.js';
 
 const app = new Hono();
 
@@ -15,7 +16,7 @@ app.use('*', cors());
 
 // Global error handler so Worker never crashes with 1101
 app.onError((err, c) => {
-  console.error('API Error:', err);
+  console.error('API Error:', JSON.stringify(describeConnectionError(err)));
   return c.json({ message: err.message || 'Terjadi kesalahan pada server' }, 500);
 });
 
@@ -35,7 +36,7 @@ let isSeeded = true;
 
 // Attach listeners to prevent unhandled EventEmitter errors from crashing workerd
 mongoose.connection.on('error', (err) => {
-  console.warn('Mongoose background connection error:', err?.message || err);
+  console.warn('Mongoose background connection error:', JSON.stringify(describeConnectionError(err)));
 });
 
 mongoose.connection.on('disconnected', () => {
@@ -51,6 +52,8 @@ async function connectDb(uri) {
   if (mongoose.connection.readyState === 3) await mongoose.disconnect();
 
   await mongoose.connect(uri, {
+    // Cloudflare is not detected as FaaS by the driver; avoid streaming monitor sockets.
+    serverMonitoringMode: 'poll',
     serverSelectionTimeoutMS: 10000,
     connectTimeoutMS: 10000,
     socketTimeoutMS: 45000,
@@ -471,12 +474,14 @@ export default {
     try {
       const pathname = new URL(request.url).pathname;
       if (pathname === '/api' || pathname.startsWith('/api/')) {
-        const id = env.KASKITA_API.idFromName('primary');
-        return await env.KASKITA_API.get(id).fetch(request);
+        // Placement hints only apply when an object is first created.
+        // This connection owner replaces the original object's failing TLS route.
+        const id = env.KASKITA_API.idFromName('primary-apac');
+        return await env.KASKITA_API.get(id, { locationHint: 'apac' }).fetch(request);
       }
       return await app.fetch(request, env, ctx);
     } catch (err) {
-      console.error('Worker root error:', err);
+      console.error('Worker root error:', JSON.stringify(describeConnectionError(err)));
       return new Response(
         JSON.stringify({ message: err?.message || 'Server sedang sibuk, silakan klik lagi 🙏' }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
